@@ -1,93 +1,41 @@
 const express = require("express");
-const {
-  makeWASocket,
-  useMultiFileAuthState,
-} = require("@whiskeysockets/baileys");
-const pino = require("pino");
+const app = express();
 require("dotenv").config();
 const path = require("path");
-const app = express();
+const whatsapp = require("./wa");
 
-// Set folder views untuk EJS
-app.set("views", path.join(__dirname, "views"));
+(async () => {
+  const { sendInvoice } = await whatsapp();
 
-// Set folder public untuk file statis seperti CSS, JS
-app.use(express.static(path.join(__dirname, "public")));
+  app
+    .use(express.static(path.join(__dirname, "public")))
+    .use(express.json())
+    .use(express.urlencoded({ extended: true }))
+    .set("views", path.join(__dirname, "views"))
+    .set("view engine", "ejs");
 
-// Set EJS sebagai template engine
-app.set("view engine", "ejs");
+  app.post("/send", async (req, res) => {
+    const nomor = process.env.NOMOR;
+    const nomor2 = process.env.NOMOR2;
+    const nomorwa = nomor.replace(/^0/, "62") + "@s.whatsapp.net";
+    const nomorwa2 = nomor2.replace(/^0/, "62") + "@s.whatsapp.net";
 
-// Middleware untuk file statis
-// app.use(express.static("public"));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-let whatsappSocket;
-
-async function initializeWhatsApp() {
-  const sessionPath = path.join(__dirname, "session");
-  const auth = await useMultiFileAuthState(sessionPath);
-  const socket = makeWASocket({
-    printQRInTerminal: true,
-    browser: ["Kimino", "", ""],
-    auth: auth.state,
-    logger: pino({ level: "silent" }),
-  });
-
-  socket.ev.on("creds.update", auth.saveCreds);
-  socket.ev.on("connection.update", async ({ connection }) => {
-    if (connection === "open") {
-      console.log("WhatsApp connected");
-    } else if (connection === "close") {
-      console.log("WhatsApp disconnected, reconnecting...");
-      initializeWhatsApp(); // Reconnect on disconnection
+    try {
+      console.log(`Sending invoice to ${nomorwa}...`);
+      await sendInvoice(nomorwa, req.body.pesan);
+      console.log(`Sending invoice to ${nomorwa2}...`);
+      await sendInvoice(nomorwa2, req.body.pesan);
+      res.status(200).json({ status: "success", message: "Invoice sent" });
+    } catch (err) {
+      console.error("Error sending invoice:", err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  async function sendMessage(phoneNumber, message) {
-    await socket.sendMessage(phoneNumber, { text: message });
-  }
+  app.use((req, res, next) => {
+    res.status(404).render("404", { title: "404 Not Found" });
+  });
 
-  return { sendMessage };
-}
-
-// Initialize WhatsApp connection
-initializeWhatsApp().then((socket) => {
-  whatsappSocket = socket;
-});
-
-// API Endpoint to send messages
-app.post("/send-message", async (req, res) => {
-  const { message } = req.body;
-  const nomor = process.env.NOMOR;
-
-  const phoneNumber = nomor.replace(/^0/, "62") + "@s.whatsapp.net";
-
-  if (!phoneNumber || !message) {
-    return res
-      .status(400)
-      .json({ error: "phoneNumber and message are required" });
-  }
-
-  try {
-    await whatsappSocket.sendMessage(phoneNumber, message);
-    return res
-      .status(200)
-      .json({ success: true, message: "Message sent successfully" });
-  } catch (error) {
-    console.error("Error sending message:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Failed to send message" });
-  }
-});
-
-app.use((req, res, next) => {
-  res.status(404).render("404", { title: "404 Not Found" });
-});
-
-// module.exports = app;
-
-// To run locally, uncomment the following lines:
-const PORT = process.env.PORT || 3002;
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+  const PORT = process.env.PORT || 3005;
+  app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+})();
